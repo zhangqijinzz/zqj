@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  color: #F0F4FF;
+  background-color: #0A1628;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+}
+
+body {
+  background: radial-gradient(ellipse at top, #1a2744 0%, #0A1628 50%, #06101F 100%);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #06101F;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #00F5FF, #A855F7);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #00F5FF, #FF6B35);
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl;
+  }
+
+  .neon-border-cyan {
+    @apply border border-neon-cyan/50 shadow-neon-cyan;
+  }
+
+  .neon-border-purple {
+    @apply border border-electric-purple/50 shadow-neon-purple;
+  }
+
+  .neon-border-orange {
+    @apply border border-vibrant-orange/50 shadow-neon-orange;
+  }
+
+  .btn-neon-cyan {
+    @apply px-6 py-3 bg-neon-cyan/10 border border-neon-cyan text-neon-cyan font-display font-semibold rounded-xl
+           hover:bg-neon-cyan/20 hover:shadow-neon-cyan transition-all duration-300
+           active:scale-95;
+  }
+
+  .btn-neon-purple {
+    @apply px-6 py-3 bg-electric-purple/10 border border-electric-purple text-electric-purple font-display font-semibold rounded-xl
+           hover:bg-electric-purple/20 hover:shadow-neon-purple transition-all duration-300
+           active:scale-95;
+  }
+
+  .btn-neon-orange {
+    @apply px-6 py-3 bg-vibrant-orange/10 border border-vibrant-orange text-vibrant-orange font-display font-semibold rounded-xl
+           hover:bg-vibrant-orange/20 hover:shadow-neon-orange transition-all duration-300
+           active:scale-95;
+  }
+
+  .btn-primary {
+    @apply px-8 py-4 bg-gradient-to-r from-neon-cyan via-electric-purple to-vibrant-orange
+           text-ocean-dark font-display font-bold text-lg rounded-xl
+           hover:shadow-neon-cyan hover:shadow-neon-purple transition-all duration-500
+           active:scale-95;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-neon-cyan via-electric-purple to-vibrant-orange;
+  }
+
+  .text-gradient-cyan {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-neon-cyan to-moon-white;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(0, 245, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 245, 255, 0.05) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+}
