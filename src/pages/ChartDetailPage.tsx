@@ -99,7 +99,31 @@ export default function ChartDetailPage() {
   };
 
   const handleDownload = () => {
+    if (!currentChart) return;
     triggerVibration([20, 30, 20]);
+
+    const exportData = {
+      title: currentChart.title,
+      description: currentChart.description,
+      author: currentChart.user.username,
+      difficulty: currentChart.difficulty,
+      tags: currentChart.tags,
+      bpm: currentChart.vibrationData.bpm,
+      vibrationData: currentChart.vibrationData,
+      visualData: currentChart.visualData,
+      exportTime: new Date().toISOString(),
+      version: '1.0',
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentChart.title}-vibration-chart.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleSubmitComment = () => {

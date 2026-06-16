@@ -8,6 +8,7 @@ import WorkshopPage from "@/pages/WorkshopPage";
 import WorkshopEditorPage from "@/pages/WorkshopEditorPage";
 import SignLanguagePage from "@/pages/SignLanguagePage";
 import SignLanguageLearnPage from "@/pages/SignLanguageLearnPage";
+import SignLanguageRecordPage from "@/pages/SignLanguageRecordPage";
 import CommunityPage from "@/pages/CommunityPage";
 import ChartDetailPage from "@/pages/ChartDetailPage";
 import UserProfilePage from "@/pages/UserProfilePage";
@@ -29,6 +30,8 @@ export default function App() {
           <Route path="/workshop/editor/:id" element={<WorkshopEditorPage />} />
           <Route path="/signlanguage" element={<SignLanguagePage />} />
           <Route path="/signlanguage/learn" element={<SignLanguageLearnPage />} />
+          <Route path="/signlanguage/learn/:id" element={<SignLanguageLearnPage />} />
+          <Route path="/signlanguage/record/:id" element={<SignLanguageRecordPage />} />
           <Route path="/community" element={<CommunityPage />} />
           <Route path="/community/chart/:id" element={<ChartDetailPage />} />
           <Route path="/user" element={<UserProfilePage />} />

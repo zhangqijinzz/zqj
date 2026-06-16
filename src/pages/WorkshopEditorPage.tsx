@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play,
@@ -22,6 +22,9 @@ import {
   Eye,
   ChevronDown,
   Check,
+  Copy,
+  CheckCheck,
+  Upload,
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { WaveformVisualizer } from '../components/WaveformVisualizer';
@@ -92,7 +95,11 @@ interface EditorParticle extends ParticleEffect {
 
 export default function WorkshopEditorPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const charts = useAppStore((state) => state.charts);
+  const saveChart = useAppStore((state) => state.saveChart);
+  const publishChart = useAppStore((state) => state.publishChart);
+  const setCurrentChart = useAppStore((state) => state.setCurrentChart);
   const existingChart = charts.find((c) => c.id === id);
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -106,6 +113,11 @@ export default function WorkshopEditorPage() {
   const [description, setDescription] = useState(existingChart?.description || '');
   const [theme, setTheme] = useState(THEMES[0]);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishDifficulty, setPublishDifficulty] = useState<'easy' | 'normal' | 'hard' | 'expert'>('normal');
+  const [publishTags, setPublishTags] = useState<string[]>([]);
 
   const [vibrationConfig, setVibrationConfig] = useState({
     intensity: 0.8,
@@ -321,9 +333,104 @@ export default function WorkshopEditorPage() {
     };
   }, [handleMouseMove, handleMouseUp]);
 
+  const chartData = useCallback(() => ({
+    title,
+    description,
+    userId: '',
+    coverImage: `https://picsum.photos/seed/${encodeURIComponent(title || 'work')}/400/300`,
+    vibrationData: vibrationSequence,
+    visualData: visualChart,
+    difficulty: publishDifficulty,
+    tags: publishTags.length > 0 ? publishTags : ['原创', '视觉系'],
+  }), [title, description, vibrationSequence, visualChart, publishDifficulty, publishTags]);
+
   const handleSave = () => {
-    triggerVibration(30);
-    console.log('Saving:', { title, description, bpm, vibrationSequence, visualChart });
+    triggerVibration([30, 50, 30]);
+    try {
+      const data = chartData();
+      const saved = saveChart({ ...data, id });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+      if (!id) {
+        navigate(`/workshop/editor/${saved.id}`, { replace: true });
+      }
+    } catch (error) {
+      console.error('保存失败:', error);
+    }
+  };
+
+  const handleExportJSON = () => {
+    triggerVibration(20);
+    setShowExportMenu(false);
+    
+    const exportData = {
+      title,
+      description,
+      bpm,
+      vibrationSequence,
+      visualChart,
+      exportTime: new Date().toISOString(),
+      version: '1.0',
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'vibration-chart'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportShareLink = () => {
+    triggerVibration(25);
+    setShowExportMenu(false);
+    
+    const shareData = {
+      t: title,
+      b: bpm,
+      v: vibrationSequence.beats.length,
+      n: visualChart.notes.length,
+    };
+    
+    const shareUrl = `${window.location.origin}/workshop/editor/${id || 'new'}?share=${btoa(encodeURIComponent(JSON.stringify(shareData)))}`;
+    
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }).catch(() => {
+      const textarea = document.createElement('textarea');
+      textarea.value = shareUrl;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    });
+  };
+
+  const handlePublish = () => {
+    triggerVibration(25);
+    setShowPublishModal(true);
+  };
+
+  const handleConfirmPublish = () => {
+    triggerVibration([30, 50, 30, 50, 30]);
+    setShowPublishModal(false);
+    
+    try {
+      const data = chartData();
+      const published = publishChart(data);
+      setCurrentChart(published);
+      setTimeout(() => {
+        navigate(`/community/${published.id}`);
+      }, 500);
+    } catch (error) {
+      console.error('发布失败:', error);
+    }
   };
 
   const formatTime = (ms: number) => {
@@ -373,13 +480,13 @@ export default function WorkshopEditorPage() {
                   className="absolute right-4 top-20 z-50 glass-card p-2 min-w-48"
                 >
                   <button
-                    onClick={() => { setShowExportMenu(false); triggerVibration(15); }}
+                    onClick={handleExportJSON}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-moon-dim hover:text-moon-white hover:bg-white/5 transition-colors"
                   >
                     <Download className="w-4 h-4" /> 导出 JSON
                   </button>
                   <button
-                    onClick={() => { setShowExportMenu(false); triggerVibration(15); }}
+                    onClick={handleExportShareLink}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-moon-dim hover:text-moon-white hover:bg-white/5 transition-colors"
                   >
                     <Share2 className="w-4 h-4" /> 导出分享链接
@@ -387,12 +494,21 @@ export default function WorkshopEditorPage() {
                 </motion.div>
               )}
             </AnimatePresence>
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={handleSave}
-              className="btn-neon-cyan flex items-center gap-2 py-2 px-4 text-sm"
+              className={cn(
+                'btn-neon-cyan flex items-center gap-2 py-2 px-4 text-sm transition-all',
+                saveSuccess && 'bg-green-500 border-green-500 text-ocean-dark'
+              )}
             >
-              <Save className="w-4 h-4" /> 保存
-            </button>
+              {saveSuccess ? (
+                <><Check className="w-4 h-4" /> 已保存</>
+              ) : (
+                <><Save className="w-4 h-4" /> 保存</>
+              )}
+            </motion.button>
             <button
               onClick={() => { setShowExportMenu(!showExportMenu); triggerVibration(15); }}
               className="btn-neon-purple flex items-center gap-2 py-2 px-4 text-sm"
@@ -400,12 +516,14 @@ export default function WorkshopEditorPage() {
               <Download className="w-4 h-4" /> 导出
               <ChevronDown className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => triggerVibration(25)}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handlePublish}
               className="btn-primary flex items-center gap-2 py-2 px-4 text-sm"
             >
-              <Share2 className="w-4 h-4" /> 发布
-            </button>
+              <Upload className="w-4 h-4" /> 发布
+            </motion.button>
           </div>
         </motion.div>
 
@@ -1109,6 +1227,114 @@ export default function WorkshopEditorPage() {
           </motion.div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showPublishModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowPublishModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-card p-6 w-full max-w-md mx-4"
+            >
+              <h3 className="font-display font-bold text-xl text-moon-white mb-4">
+                发布到社区
+              </h3>
+              <p className="text-moon-dim text-sm mb-6">
+                你的谱面将发布到震动谱面社区，供其他听障玩家游玩和交流。
+              </p>
+
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="text-sm text-moon-dim block mb-2">难度等级</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['easy', 'normal', 'hard', 'expert'] as const).map((diff) => (
+                      <button
+                        key={diff}
+                        onClick={() => { setPublishDifficulty(diff); triggerVibration(10); }}
+                        className={cn(
+                          'py-2 rounded-lg text-sm font-medium transition-all capitalize',
+                          publishDifficulty === diff
+                            ? 'bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/50'
+                            : 'bg-white/5 text-moon-dim border border-white/10 hover:bg-white/10'
+                        )}
+                      >
+                        {diff === 'easy' ? '简单' : diff === 'normal' ? '普通' : diff === 'hard' ? '困难' : '专家'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm text-moon-dim block mb-2">标签（可选）</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['原创', '视觉系', '治愈', '燃向', '电子', '节奏向'].map((tag) => {
+                      const isSelected = publishTags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          onClick={() => {
+                            setPublishTags((prev) =>
+                              isSelected ? prev.filter((t) => t !== tag) : [...prev, tag]
+                            );
+                            triggerVibration(10);
+                          }}
+                          className={cn(
+                            'px-3 py-1.5 rounded-full text-sm transition-all',
+                            isSelected
+                              ? 'bg-electric-purple/20 text-electric-purple border border-electric-purple/50'
+                              : 'bg-white/5 text-moon-dim border border-white/10 hover:bg-white/10'
+                          )}
+                        >
+                          #{tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowPublishModal(false)}
+                  className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-moon-dim font-display font-semibold hover:bg-white/10 transition-colors"
+                >
+                  取消
+                </button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleConfirmPublish}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-neon-cyan via-electric-purple to-vibrant-orange text-ocean-dark font-display font-bold hover:shadow-neon-cyan hover:shadow-neon-purple transition-all"
+                >
+                  确认发布
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {copiedLink && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 glass-card px-6 py-3 flex items-center gap-2"
+          >
+            <CheckCheck className="w-5 h-5 text-neon-green" />
+            <span className="font-display font-semibold text-moon-white">分享链接已复制到剪贴板</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

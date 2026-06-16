@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Search, Mic, PlayCircle, Star, Music } from 'lucide-react';
 import { useAppStore } from '../store';
@@ -34,6 +35,7 @@ const mockRatings: Record<string, number> = {
 };
 
 export default function SignLanguagePage() {
+  const navigate = useNavigate();
   const levels = useAppStore((state) => state.levels);
   const setCurrentLevel = useAppStore((state) => state.setCurrentLevel);
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,11 +56,13 @@ export default function SignLanguagePage() {
   const handleLearn = (level: Level) => {
     triggerVibration(30);
     setCurrentLevel(level);
+    navigate(`/signlanguage/learn/${level.id}`);
   };
 
   const handleRecord = (level: Level) => {
     triggerVibration([20, 50, 20]);
     setCurrentLevel(level);
+    navigate(`/signlanguage/record/${level.id}`);
   };
 
   return (

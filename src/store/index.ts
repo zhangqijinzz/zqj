@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { User, Level, Chart, MVWork, GameState, UserSettings, HitResult } from '../types';
+import type { User, Level, Chart, MVWork, GameState, UserSettings, HitResult, VibrationSequence, VisualChart } from '../types';
 import { mockUser, mockLevels, mockCharts, mockMVWorks } from '../data/mockData';
 
 interface AppStore {
@@ -25,6 +25,11 @@ interface AppStore {
   updateGameTime: (time: number) => void;
   registerHit: (result: HitResult) => void;
   resetGameState: () => void;
+
+  saveChart: (chart: Omit<Chart, 'id' | 'user' | 'createdAt' | 'playCount' | 'likes'> & { id?: string }) => Chart;
+  publishChart: (chart: Omit<Chart, 'id' | 'user' | 'createdAt' | 'playCount' | 'likes'>) => Chart;
+  
+  addMVWork: (work: Omit<MVWork, 'id' | 'user' | 'createdAt' | 'likes' | 'rating' | 'ratingCount'>) => MVWork;
 }
 
 const initialGameState: GameState = {
@@ -111,4 +116,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   resetGameState: () => set({ gameState: initialGameState }),
+
+  saveChart: (chartData) => {
+    const state = get();
+    const user = state.user;
+    if (!user) throw new Error('用户未登录');
+
+    if (chartData.id) {
+      const updatedCharts = state.charts.map((c) =>
+        c.id === chartData.id ? { ...c, ...chartData } : c
+      );
+      set({ charts: updatedCharts });
+      return updatedCharts.find((c) => c.id === chartData.id)!;
+    }
+
+    const newChart: Chart = {
+      ...chartData,
+      id: `chart-${Date.now()}`,
+      user,
+      playCount: 0,
+      likes: 0,
+      createdAt: new Date(),
+    };
+    set({ charts: [newChart, ...state.charts] });
+    return newChart;
+  },
+
+  publishChart: (chartData) => {
+    const state = get();
+    const user = state.user;
+    if (!user) throw new Error('用户未登录');
+
+    const newChart: Chart = {
+      ...chartData,
+      id: `chart-${Date.now()}`,
+      user,
+      playCount: 0,
+      likes: 0,
+      createdAt: new Date(),
+    };
+    set({ charts: [newChart, ...state.charts] });
+    return newChart;
+  },
+
+  addMVWork: (workData) => {
+    const state = get();
+    const user = state.user;
+    if (!user) throw new Error('用户未登录');
+
+    const newWork: MVWork = {
+      ...workData,
+      id: `mv-${Date.now()}`,
+      user,
+      likes: 0,
+      rating: 0,
+      ratingCount: 0,
+      createdAt: new Date(),
+    };
+    set({ mvWorks: [newWork, ...state.mvWorks] });
+    return newWork;
+  },
 }));
