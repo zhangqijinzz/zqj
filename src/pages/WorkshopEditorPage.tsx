@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play,
@@ -25,6 +25,7 @@ import {
   Copy,
   CheckCheck,
   Upload,
+  Import,
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { WaveformVisualizer } from '../components/WaveformVisualizer';
@@ -96,11 +97,13 @@ interface EditorParticle extends ParticleEffect {
 export default function WorkshopEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const charts = useAppStore((state) => state.charts);
   const saveChart = useAppStore((state) => state.saveChart);
   const publishChart = useAppStore((state) => state.publishChart);
   const setCurrentChart = useAppStore((state) => state.setCurrentChart);
   const existingChart = charts.find((c) => c.id === id);
+  const shareParam = searchParams.get('share');
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -118,6 +121,8 @@ export default function WorkshopEditorPage() {
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishDifficulty, setPublishDifficulty] = useState<'easy' | 'normal' | 'hard' | 'expert'>('normal');
   const [publishTags, setPublishTags] = useState<string[]>([]);
+  const [importedFromShare, setImportedFromShare] = useState(false);
+  const [showImportNotice, setShowImportNotice] = useState(false);
 
   const [vibrationConfig, setVibrationConfig] = useState({
     intensity: 0.8,
@@ -188,6 +193,63 @@ export default function WorkshopEditorPage() {
     backgroundTheme: theme.id,
     totalDuration: TOTAL_DURATION,
   };
+
+  const parseShareData = useCallback((shareStr: string) => {
+    try {
+      const decoded = decodeURIComponent(atob(shareStr));
+      const data = JSON.parse(decoded);
+      return data;
+    } catch (error) {
+      console.error('解析分享数据失败:', error);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!shareParam || existingChart || importedFromShare) return;
+    
+    const shareData = parseShareData(shareParam);
+    if (!shareData) return;
+
+    if (shareData.title) {
+      setTitle(shareData.title);
+    }
+    if (shareData.description) {
+      setDescription(shareData.description);
+    }
+    if (shareData.bpm) {
+      setBpm(shareData.bpm);
+    }
+    if (shareData.notes && Array.isArray(shareData.notes)) {
+      const importedNotes = shareData.notes.map((n: VisualNote, i: number) => ({
+        ...n,
+        id: `note-share-${i}-${Date.now()}`,
+      }));
+      setNotes(importedNotes);
+    }
+    if (shareData.particles && Array.isArray(shareData.particles)) {
+      const importedParticles = shareData.particles.map((p: ParticleEffect, i: number) => ({
+        ...p,
+        id: `particle-share-${i}-${Date.now()}`,
+      }));
+      setParticles(importedParticles);
+    }
+    if (shareData.theme) {
+      const themeMatch = THEMES.find((t) => t.id === shareData.theme);
+      if (themeMatch) {
+        setTheme(themeMatch);
+      }
+    }
+    if (shareData.vibrationConfig) {
+      setVibrationConfig(shareData.vibrationConfig);
+    }
+
+    setImportedFromShare(true);
+    setShowImportNotice(true);
+    triggerVibration([20, 30, 20]);
+    
+    setTimeout(() => setShowImportNotice(false), 3000);
+  }, [shareParam, existingChart, importedFromShare, parseShareData]);
 
   const animate = useCallback(() => {
     const elapsed = performance.now() - startTimeRef.current;
@@ -389,13 +451,19 @@ export default function WorkshopEditorPage() {
     setShowExportMenu(false);
     
     const shareData = {
-      t: title,
-      b: bpm,
-      v: vibrationSequence.beats.length,
-      n: visualChart.notes.length,
+      title,
+      description,
+      bpm,
+      notes: notes.map(({ id, ...rest }) => rest),
+      particles: particles.map(({ id, ...rest }) => rest),
+      theme: theme.id,
+      vibrationConfig,
+      exportTime: new Date().toISOString(),
+      version: '1.0',
     };
     
-    const shareUrl = `${window.location.origin}/workshop/editor/${id || 'new'}?share=${btoa(encodeURIComponent(JSON.stringify(shareData)))}`;
+    const encoded = btoa(encodeURIComponent(JSON.stringify(shareData)));
+    const shareUrl = `${window.location.origin}/workshop/editor/new?share=${encoded}`;
     
     navigator.clipboard.writeText(shareUrl).then(() => {
       setCopiedLink(true);
@@ -1332,6 +1400,20 @@ export default function WorkshopEditorPage() {
           >
             <CheckCheck className="w-5 h-5 text-neon-green" />
             <span className="font-display font-semibold text-moon-white">分享链接已复制到剪贴板</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showImportNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-24 left-1/2 -translate-x-1/2 z-50 glass-card px-6 py-3 flex items-center gap-2 border border-neon-cyan/50"
+          >
+            <Import className="w-5 h-5 text-neon-cyan" />
+            <span className="font-display font-semibold text-moon-white">已从分享链接导入谱面数据</span>
           </motion.div>
         )}
       </AnimatePresence>

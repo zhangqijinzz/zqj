@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -15,12 +15,16 @@ import {
   Clock,
   Star,
   Check,
+  Camera,
+  CameraOff,
+  AlertCircle,
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { triggerVibration } from '../utils/vibration';
 import { cn } from '../lib/utils';
 
 type RecordState = 'idle' | 'recording' | 'paused' | 'preview' | 'submitting';
+type CameraStatus = 'checking' | 'ready' | 'denied' | 'error';
 
 export default function SignLanguageRecordPage() {
   const navigate = useNavigate();
@@ -35,6 +39,16 @@ export default function SignLanguageRecordPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSubmitSuccess, setShowSubmitSuccess] = useState(false);
   const [videoTitle, setVideoTitle] = useState('');
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('checking');
+  const [cameraError, setCameraError] = useState('');
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordedBlobRef = useRef<Blob | null>(null);
+  const recordedUrlRef = useRef<string>('');
+  const streamRef = useRef<MediaStream | null>(null);
   
   const recordTimerRef = useRef<number>();
   const playTimerRef = useRef<number>();
@@ -60,6 +74,56 @@ export default function SignLanguageRecordPage() {
     );
   }, [currentTime, lyrics]);
 
+  const initCamera = useCallback(async () => {
+    try {
+      setCameraStatus('checking');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
+        audio: false,
+      });
+      
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      
+      setCameraStatus('ready');
+    } catch (err) {
+      console.error('摄像头初始化失败:', err);
+      if (err instanceof Error) {
+        if (err.name === 'NotAllowedError') {
+          setCameraError('摄像头权限被拒绝，请在浏览器设置中允许访问摄像头');
+        } else if (err.name === 'NotFoundError') {
+          setCameraError('未找到摄像头设备');
+        } else {
+          setCameraError(`摄像头初始化失败: ${err.message}`);
+        }
+      } else {
+        setCameraError('摄像头初始化失败');
+      }
+      setCameraStatus('denied');
+    }
+  }, []);
+
+  useEffect(() => {
+    initCamera();
+    
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (recordedUrlRef.current) {
+        URL.revokeObjectURL(recordedUrlRef.current);
+      }
+    };
+  }, [initCamera]);
+
   useEffect(() => {
     if (recordState === 'recording') {
       startTimeRef.current = performance.now() - pausedTimeRef.current;
@@ -69,10 +133,7 @@ export default function SignLanguageRecordPage() {
         setCurrentTime(elapsed);
         
         if (elapsed >= totalDuration) {
-          setRecordState('preview');
-          setRecordedTime(totalDuration);
-          setCurrentTime(totalDuration);
-          triggerVibration([50, 100, 50]);
+          handleStopRecord();
         }
       }, 100);
     } else {
@@ -89,46 +150,119 @@ export default function SignLanguageRecordPage() {
   }, [recordState, totalDuration]);
 
   useEffect(() => {
-    if (isPlaying && recordState === 'preview') {
-      const startTime = performance.now() - currentTime;
-      playTimerRef.current = window.setInterval(() => {
-        const elapsed = performance.now() - startTime;
-        if (elapsed >= recordedTime) {
-          setIsPlaying(false);
-          setCurrentTime(recordedTime);
-        } else {
-          setCurrentTime(elapsed);
+    if (isPlaying && recordState === 'preview' && previewVideoRef.current) {
+      previewVideoRef.current.play();
+      
+      const updateTime = () => {
+        if (previewVideoRef.current) {
+          setCurrentTime(previewVideoRef.current.currentTime * 1000);
         }
-      }, 100);
-    } else {
-      if (playTimerRef.current) clearInterval(playTimerRef.current);
+      };
+      
+      previewVideoRef.current.addEventListener('timeupdate', updateTime);
+      
+      return () => {
+        previewVideoRef.current?.removeEventListener('timeupdate', updateTime);
+      };
+    } else if (!isPlaying && recordState === 'preview' && previewVideoRef.current) {
+      previewVideoRef.current.pause();
     }
-    return () => {
-      if (playTimerRef.current) clearInterval(playTimerRef.current);
-    };
-  }, [isPlaying, recordState, recordedTime, currentTime]);
+  }, [isPlaying, recordState]);
 
-  const handleStartRecord = () => {
+  const handlePreviewToggle = () => {
+    triggerVibration(15);
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleStartRecord = async () => {
+    if (cameraStatus !== 'ready' || !streamRef.current) {
+      triggerVibration(30);
+      return;
+    }
+    
     triggerVibration([30, 50, 30]);
-    setRecordState('recording');
-    setRecordedTime(0);
-    setCurrentTime(0);
-    pausedTimeRef.current = 0;
+    
+    try {
+      const mimeTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4',
+      ];
+      
+      let mimeType = '';
+      for (const type of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+      
+      const options: MediaRecorderOptions = {};
+      if (mimeType) {
+        options.mimeType = mimeType;
+      }
+      
+      const mediaRecorder = new MediaRecorder(streamRef.current, options);
+      mediaRecorderRef.current = mediaRecorder;
+      recordedChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        const blobType = mimeType || 'video/webm';
+        const blob = new Blob(recordedChunksRef.current, { type: blobType });
+        recordedBlobRef.current = blob;
+        
+        if (recordedUrlRef.current) {
+          URL.revokeObjectURL(recordedUrlRef.current);
+        }
+        recordedUrlRef.current = URL.createObjectURL(blob);
+        
+        if (previewVideoRef.current) {
+          previewVideoRef.current.src = recordedUrlRef.current;
+        }
+      };
+      
+      mediaRecorder.start();
+      setRecordState('recording');
+      setRecordedTime(0);
+      setCurrentTime(0);
+      pausedTimeRef.current = 0;
+    } catch (error) {
+      console.error('开始录制失败:', error);
+      triggerVibration([50, 30, 50]);
+    }
   };
 
   const handlePauseRecord = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.pause();
+    }
     triggerVibration(20);
     setRecordState('paused');
   };
 
   const handleResumeRecord = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume();
+    }
     triggerVibration(20);
     setRecordState('recording');
   };
 
   const handleStopRecord = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
     triggerVibration([20, 30, 20]);
     setRecordState('preview');
+    setIsPlaying(false);
+    setCurrentTime(0);
   };
 
   const handleReset = () => {
@@ -138,11 +272,16 @@ export default function SignLanguageRecordPage() {
     setCurrentTime(0);
     setIsPlaying(false);
     pausedTimeRef.current = 0;
-  };
-
-  const handlePreviewToggle = () => {
-    triggerVibration(15);
-    setIsPlaying(!isPlaying);
+    recordedChunksRef.current = [];
+    recordedBlobRef.current = null;
+    
+    if (recordedUrlRef.current) {
+      URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = '';
+    }
+    if (previewVideoRef.current) {
+      previewVideoRef.current.src = '';
+    }
   };
 
   const handleSubmit = () => {
@@ -152,12 +291,14 @@ export default function SignLanguageRecordPage() {
     
     setTimeout(() => {
       try {
+        const videoUrl = recordedUrlRef.current || `recorded-${Date.now()}.webm`;
+        
         addMVWork({
           userId: '',
           songId: level.id,
           song: level.song,
           title: videoTitle || `我的${level.title}手语演绎`,
-          videoUrl: `recorded-${Date.now()}.webm`,
+          videoUrl: videoUrl,
           thumbnail: `https://picsum.photos/seed/${encodeURIComponent(level.title + Date.now())}/320/180`,
         });
         setShowSubmitSuccess(true);
@@ -181,8 +322,8 @@ export default function SignLanguageRecordPage() {
   };
 
   const progress = recordState === 'preview' 
-    ? (currentTime / recordedTime) * 100 
-    : (recordedTime / totalDuration) * 100;
+    ? recordedTime > 0 ? (currentTime / recordedTime) * 100 : 0
+    : totalDuration > 0 ? (recordedTime / totalDuration) * 100 : 0;
 
   if (!level) {
     return (
@@ -237,86 +378,76 @@ export default function SignLanguageRecordPage() {
             className="lg:col-span-2 space-y-6"
           >
             <div className="glass-card overflow-hidden">
-              <div className="relative aspect-video bg-gradient-to-br from-deep-ocean via-electric-purple/10 to-neon-pink/10">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  {recordState === 'idle' && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className="text-center"
-                    >
-                      <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-neon-pink/30 to-vibrant-orange/30 flex items-center justify-center">
-                        <Video className="w-12 h-12 text-neon-pink" />
-                      </div>
-                      <p className="text-moon-white font-display font-semibold mb-2">准备开始录制</p>
-                      <p className="text-moon-dim text-sm">点击下方按钮开始你的手语演绎</p>
-                    </motion.div>
-                  )}
+              <div className="relative aspect-video bg-gradient-to-br from-deep-ocean via-electric-purple/10 to-neon-pink/10 overflow-hidden">
+                {cameraStatus === 'checking' && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10 bg-deep-ocean/80">
+                    <div className="text-center">
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                        className="w-12 h-12 border-2 border-neon-cyan/30 border-t-neon-cyan rounded-full mx-auto mb-3"
+                      />
+                      <p className="text-moon-dim">正在启动摄像头...</p>
+                    </div>
+                  </div>
+                )}
 
-                  {(recordState === 'recording' || recordState === 'paused') && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="w-full h-full flex items-center justify-center"
-                    >
-                      <div className="text-center">
-                        <motion.div
-                          animate={recordState === 'recording' ? {
-                            scale: [1, 1.05, 1],
-                          } : {}}
-                          transition={{ duration: 2, repeat: Infinity }}
-                          className="text-9xl mb-6"
-                        >
-                          🧑‍🎤
-                        </motion.div>
-                        <div className="flex justify-center gap-8">
-                          {['👐', '✋', '🤚', '🖐️'].map((emoji, i) => (
-                            <motion.span
-                              key={i}
-                              animate={recordState === 'recording' ? {
-                                y: [0, -15, 0],
-                                rotate: [0, 10, -10, 0],
-                              } : {}}
-                              transition={{ duration: 1, delay: i * 0.2, repeat: Infinity }}
-                              className={cn(
-                                'text-5xl transition-opacity',
-                                recordState === 'paused' && 'opacity-50'
-                              )}
-                            >
-                              {emoji}
-                            </motion.span>
-                          ))}
-                        </div>
+                {cameraStatus === 'denied' && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10 bg-deep-ocean/90">
+                    <div className="text-center px-8">
+                      <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-red-500/20 flex items-center justify-center">
+                        <CameraOff className="w-10 h-10 text-red-400" />
                       </div>
-                    </motion.div>
-                  )}
+                      <p className="text-moon-white font-display font-semibold mb-2">
+                        摄像头不可用
+                      </p>
+                      <p className="text-moon-dim text-sm mb-4 max-w-xs mx-auto">
+                        {cameraError || '请确保已授予摄像头权限'}
+                      </p>
+                      <button
+                        onClick={initCamera}
+                        className="px-4 py-2 rounded-xl bg-neon-cyan/20 border border-neon-cyan/50 text-neon-cyan font-display font-semibold text-sm hover:bg-neon-cyan/30 transition-colors"
+                      >
+                        重试
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-                  {recordState === 'preview' && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="w-full h-full flex items-center justify-center"
-                    >
-                      <div className="text-center">
-                        <motion.div
-                          animate={isPlaying ? {
-                            scale: [1, 1.05, 1],
-                          } : {}}
-                          transition={{ duration: 2, repeat: Infinity }}
-                          className="text-9xl mb-6 opacity-80"
-                        >
-                          🎬
-                        </motion.div>
-                        <p className="text-moon-white font-display font-semibold mb-2">
-                          {isPlaying ? '回放中...' : '录制完成'}
-                        </p>
-                        <p className="text-moon-dim text-sm">
-                          时长: {formatTime(recordedTime)}
-                        </p>
-                      </div>
-                    </motion.div>
+                <video
+                  ref={videoRef}
+                  className={cn(
+                    'absolute inset-0 w-full h-full object-cover transition-opacity duration-300',
+                    recordState === 'preview' ? 'opacity-0' : 'opacity-100',
                   )}
-                </div>
+                  muted
+                  playsInline
+                  autoPlay
+                />
+
+                <video
+                  ref={previewVideoRef}
+                  className={cn(
+                    'absolute inset-0 w-full h-full object-cover transition-opacity duration-300',
+                    recordState === 'preview' ? 'opacity-100' : 'opacity-0',
+                  )}
+                  muted
+                  playsInline
+                  onEnded={() => setIsPlaying(false)}
+                />
+
+                {recordState === 'idle' && cameraStatus === 'ready' && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent"
+                  >
+                    <div className="flex items-center gap-2 text-white/80 text-sm">
+                      <Camera className="w-4 h-4" />
+                      <span>摄像头已就绪，点击下方按钮开始录制</span>
+                    </div>
+                  </motion.div>
+                )}
 
                 {recordState !== 'idle' && (
                   <div className="absolute top-4 right-4 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm">
@@ -332,6 +463,15 @@ export default function SignLanguageRecordPage() {
                     <span className="text-xs text-red-300 font-display">REC</span>
                   </div>
                 )}
+
+                {(recordState === 'recording' || recordState === 'paused') && (
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className={cn(
+                      'absolute inset-0 border-4 transition-colors duration-300',
+                      recordState === 'recording' ? 'border-red-500/30' : 'border-yellow-500/30',
+                    )} />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -339,9 +479,11 @@ export default function SignLanguageRecordPage() {
               <div
                 className="relative h-2 rounded-full bg-white/10 cursor-pointer group"
                 onClick={(e) => {
-                  if (recordState === 'preview') {
+                  if (recordState === 'preview' && previewVideoRef.current && recordedTime > 0) {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const percent = (e.clientX - rect.left) / rect.width;
+                    const seekTime = percent * recordedTime / 1000;
+                    previewVideoRef.current.currentTime = seekTime;
                     setCurrentTime(percent * recordedTime);
                   }
                 }}
@@ -379,7 +521,13 @@ export default function SignLanguageRecordPage() {
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={handleStartRecord}
-                    className="p-5 rounded-full bg-gradient-to-br from-red-500 to-neon-pink text-white shadow-lg hover:shadow-neon-purple transition-all"
+                    disabled={cameraStatus !== 'ready'}
+                    className={cn(
+                      'p-5 rounded-full shadow-lg transition-all',
+                      cameraStatus === 'ready'
+                        ? 'bg-gradient-to-br from-red-500 to-neon-pink text-white hover:shadow-neon-purple'
+                        : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
+                    )}
                   >
                     <Mic className="w-7 h-7" />
                   </motion.button>
